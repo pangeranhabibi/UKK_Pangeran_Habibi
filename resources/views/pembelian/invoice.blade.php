@@ -58,7 +58,7 @@
             <p>Bergabung Sejak : 
                 {{ $transaction->customer ? date('d F Y', strtotime($transaction->customer->created_at)) : '-' }}
             </p>
-            <p>Poin Member :   {{ floor($transaction->total_price / 100) }} </p>
+            <p>Poin Member : {{ $transaction->customer ? $transaction->customer->total_point : '0' }} </p>
         </div>
         
         <table>

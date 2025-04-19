@@ -102,7 +102,11 @@
                                             MEMBER SEJAK :
                                             {{ date('d F Y', strtotime($transaction->customer->created_at)) }}
                                             <br>
-                                            MEMBER POIN :   {{ floor($transaction->total_price / 100) }}  
+                                            @php
+                                                $poinDidapat = floor(collect($transactionDetails)->sum('sub_total') / 100);
+                                            @endphp
+                                            MEMBER POIN : {{ $poinDidapat }}
+
                                         </address>
                                     </div>
                                     @endif

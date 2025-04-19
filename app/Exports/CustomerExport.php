@@ -3,51 +3,71 @@
 namespace App\Exports;
 
 use App\Models\Pembelian;
-use Maatwebsite\Excel\Concerns\FromCollection;
+use Maatwebsite\Excel\Concerns\FromArray;
 use Maatwebsite\Excel\Concerns\WithHeadings;
-use Maatwebsite\Excel\Concerns\WithMapping;
-use Maatwebsite\Excel\Concerns\WithEvents;
 use Maatwebsite\Excel\Concerns\WithCustomStartCell;
+use Maatwebsite\Excel\Concerns\WithEvents;
 use Maatwebsite\Excel\Events\AfterSheet;
 
-class CustomerExport implements FromCollection, WithHeadings, WithMapping, WithCustomStartCell, WithEvents
+class CustomerExport implements FromArray, WithHeadings, WithCustomStartCell, WithEvents
 {
-    public function collection()
+    protected $data = [];
+
+    public function __construct()
     {
-        return Pembelian::with(['customer', 'details.produk'])->get();
+        $this->generateData();
+    }
+
+    public function generateData()
+    {
+        $transactions = Pembelian::with(['customer', 'details.produk'])->get();
+
+        foreach ($transactions as $transaction) {
+            $isFirst = true;
+
+            foreach ($transaction->details as $detail) {
+                $hargaPerItem = $detail->sub_total / $detail->quantity;
+
+                $this->data[] = [
+                    $isFirst ? ($transaction->customer->id ?? '') : '',
+                    $isFirst ? ($transaction->customer->nama ?? 'Bukan Member') : '',
+                    $isFirst ? ($transaction->customer->no_hp ?? '-') : '',
+                    $isFirst ? ($transaction->customer->total_point ?? 0) : '',
+                    $detail->produk->nama_produk,
+                    $detail->quantity,
+                    'Rp ' . number_format($hargaPerItem, 2, ',', '.'),
+                    $isFirst ? 'Rp ' . number_format($transaction->total_price, 2, ',', '.') : '',
+                    $isFirst ? 'Rp ' . number_format($transaction->total_payment, 2, ',', '.') : '',
+                    $isFirst ? 'Rp ' . number_format($transaction->used_point, 2, ',', '.') : '',
+                    $isFirst ? 'Rp ' . number_format($transaction->total_return, 2, ',', '.') : '',
+                    $isFirst ? $transaction->created_at->format('d-m-Y') : '',
+                ];
+
+                $isFirst = false;
+            }
+        }
+    }
+
+    public function array(): array
+    {
+        return $this->data;
     }
 
     public function headings(): array
     {
         return [
+            'ID Pelanggan',
             'Nama Pelanggan',
             'No HP Pelanggan',
             'Poin Pelanggan',
             'Produk',
+            'QTY',
+            'Harga per 1',
             'Total Harga',
             'Total Bayar',
             'Total Diskon Poin',
             'Total Kembalian',
-            'Tanggal Pembelian'
-        ];
-    }
-
-    public function map($transaction): array
-    {
-        $products = $transaction->details->map(function ($detail) {
-            return $detail->produk->nama_produk . "\n(" . $detail->quantity . ' x Rp ' . number_format($detail->sub_total, 2, ',', '.') . ')';
-        })->implode("\n");
-
-        return [
-            $transaction->customer->nama ?? 'Bukan Member',
-            $transaction->customer->no_hp ?? '-',
-            $transaction->customer->total_point ?? 0,
-            $products,
-            'Rp ' . number_format($transaction->total_price, 2, ',', '.'),
-            'Rp ' . number_format($transaction->total_payment, 2, ',', '.'),
-            'Rp ' . number_format($transaction->used_point, 2, ',', '.'),
-            'Rp ' . number_format($transaction->total_return, 2, ',', '.'),
-            $transaction->created_at->format('d-m-Y'),
+            'Tanggal Pembelian',
         ];
     }
 
@@ -59,12 +79,11 @@ class CustomerExport implements FromCollection, WithHeadings, WithMapping, WithC
     public function registerEvents(): array
     {
         return [
-            AfterSheet::class => function(AfterSheet $event) {
+            AfterSheet::class => function (AfterSheet $event) {
                 $sheet = $event->sheet->getDelegate();
 
-                // Judul
                 $sheet->setCellValue('A1', 'Data Penjualan');
-                $sheet->mergeCells('A1:I1');
+                $sheet->mergeCells('A1:L1');
                 $sheet->getStyle('A1')->applyFromArray([
                     'font' => [
                         'bold' => true,
@@ -75,16 +94,8 @@ class CustomerExport implements FromCollection, WithHeadings, WithMapping, WithC
                     ],
                 ]);
 
-                // AutoSize kolom biar menyesuaikan isi
-                foreach (range('A', 'I') as $col) {
+                foreach (range('A', 'L') as $col) {
                     $sheet->getColumnDimension($col)->setAutoSize(true);
-                }
-
-                // Wrap Text dan auto-height hanya di kolom produk (D)
-                $highestRow = $sheet->getHighestRow();
-                for ($row = 3; $row <= $highestRow; $row++) {
-                    $sheet->getStyle("D{$row}")->getAlignment()->setWrapText(true);
-                    $sheet->getRowDimension($row)->setRowHeight(-1); // -1 = auto height
                 }
             },
         ];

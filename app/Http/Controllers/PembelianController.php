@@ -91,95 +91,75 @@ class PembelianController extends Controller
      * Store a newly created resource in storage.
      */
     public function store(Request $request)
-    { 
-        DB::beginTransaction();
-        try {
-            $transaction = new Pembelian();
-            $transaction->user_id = auth()->id();
-            $transaction->total_price = $request->total;
-            $transaction->total_payment = str_replace(['Rp.', '.', ','], '', $request->total_pay);
-            $transaction->total_return = $transaction->total_payment - $transaction->total_price;
+{ 
+    DB::beginTransaction();
+    try {
+        $transaction = new Pembelian();
+        $transaction->user_id = auth()->id();
+        $transaction->total_price = $request->total;
+        $transaction->total_payment = str_replace(['Rp.', '.', ','], '', $request->total_pay);
+        $transaction->total_return = $transaction->total_payment - $transaction->total_price;
 
-            // Cek apakah member dan transaksi ke berapa
-            $transactionCount = 0;
-            if ($request->member == 'Member') {
-                $customer = Customer::where('no_hp', $request->no_hp)->first();
+        // Default: tidak ada poin
+        $transaction->point = 0;
 
-                if (!$customer) {
-                    $customer = new Customer();
-                    $customer->no_hp = $request->no_hp;
-                    $customer->total_point = 0;
-                    $customer->save();
-                }
+        // Jika member, cek transaksi keberapa untuk hitung poin
+        if ($request->member == 'Member') {
+            $customer = Customer::where('no_hp', $request->no_hp)->first();
 
-                $transactionCount = Pembelian::where('customer_id', $customer->id)->count();
-            }
-
-            // Beri poin hanya jika ini bukan transaksi pertama
-            $transaction->point = ($transactionCount > 0) ? round($transaction->total_price / 100) : 0;
-
-            $transaction->save();
-
-
-            foreach ($request->products as $product) {
-                $productData = explode(';', $product);
-                $detail = new Transaction_detail();
-                $detail->transaction_id = $transaction->id;
-                $detail->produk_id = $productData[0];
-                $detail->quantity = $productData[3];
-                $detail->sub_total = $productData[4];
-                $detail->save();
-
-                $produk = Produk::find($productData[0]);
-                if ($produk) {
-                    $produk->stok -= $productData[3];
-                    $produk->save();
-                }
-            }
-
-            if ($request->member == 'Member') {
-                $customer = Customer::where('no_hp', $request->no_hp)->first();
-            
-                if (!$customer) {
-                    $customer = new Customer();
-                    $customer->no_hp = $request->no_hp;
-                    $customer->total_point = 0;
-                    $customer->save(); 
-                }
-            
-                $transactionCount = Pembelian::where('customer_id', $customer->id)->count();
-                if ($transactionCount == 0) {
-                    $request->merge(['check_poin' => 'Tidak']); 
-                }
-        
-                if ($request->check_poin == 'Ya' && $transactionCount > 0) {
-                    $poinDigunakan = $request->poin_digunakan; 
-                    $customer->total_point -= $poinDigunakan;
-                    $customer->save();
-                }
-                Log::info('Total point sebelum ditambah: ' . $customer->total_point);
-                Log::info('Point dari transaksi: ' . $transaction->point);
-            
-                $customer->total_point += $transaction->point;
-        
-                Log::info('Total point setelah ditambah: ' . $customer->total_point);
-            
+            if (!$customer) {
+                $customer = new Customer();
+                $customer->no_hp = $request->no_hp;
+                $customer->total_point = 0;
                 $customer->save();
-            
-                $transaction->customer_id = $customer->id;
-                $transaction->save();
-            
-                DB::commit();
-                return redirect()->route('pembelian.member', $transaction->id);
-            } else {
-                DB::commit();
-                return redirect()->route('pembelian.show', $transaction->id);
             }
-        } catch (\Exception $e) {
-            DB::rollBack();
-            return redirect()->back()->with('error', 'Terjadi kesalahan: ' . $e->getMessage());
+
+            // Cek apakah ini transaksi pertama
+            $transactionCount = Pembelian::where('customer_id', $customer->id)->count();
+
+            // Kalau sudah pernah transaksi, baru dapat poin
+            if ($transactionCount > 0) {
+                $transaction->point = round($transaction->total_price / 100);
+            }
+
+            // Simpan customer_id, nanti lanjut di memberStore
+            $transaction->customer_id = $customer->id;
         }
+
+        $transaction->save();
+
+        // Simpan detail produk & kurangi stok
+        foreach ($request->products as $product) {
+            $productData = explode(';', $product);
+            $detail = new Transaction_detail();
+            $detail->transaction_id = $transaction->id;
+            $detail->produk_id = $productData[0];
+            $detail->quantity = $productData[3];
+            $detail->sub_total = $productData[4];
+            $detail->save();
+
+            $produk = Produk::find($productData[0]);
+            if ($produk) {
+                $produk->stok -= $productData[3];
+                $produk->save();
+            }
+        }
+
+        DB::commit();
+
+        // Redirect berdasarkan member / non-member
+        if ($request->member == 'Member') {
+            return redirect()->route('pembelian.member', $transaction->id);
+        } else {
+            return redirect()->route('pembelian.show', $transaction->id);
+        }
+
+    } catch (\Exception $e) {
+        DB::rollBack();
+        return redirect()->back()->with('error', 'Terjadi kesalahan: ' . $e->getMessage());
     }
+}
+
 
     /**
      * Display the specified resource.
@@ -221,20 +201,18 @@ class PembelianController extends Controller
     /**
      * Show the form for editing the specified resource.
      */
-    public function memberStore(Request $request)
+        public function memberStore(Request $request)
     {
         $request->validate([
             'nama' => 'required|string|max:100',
             'no_hp' => 'required|string|max:12',
             'transaction_id' => 'required|exists:pembelians,id',
-            'check_poin' => 'nullable|in:Ya', 
+            'check_poin' => 'nullable|in:Ya',
         ]);
 
         $customer = Customer::updateOrCreate(
             ['no_hp' => $request->no_hp],
-            [
-                'nama' => $request->nama,
-            ]
+            ['nama' => $request->nama]
         );
 
         $transaction = Pembelian::find($request->transaction_id);
@@ -242,25 +220,34 @@ class PembelianController extends Controller
             return redirect()->back()->with('error', 'Transaksi tidak ditemukan.');
         }
 
-        if ($request->check_poin == 'Ya') {
+        $transactionCount = Pembelian::where('customer_id', $customer->id)->count();
 
+        if ($request->check_poin === 'Ya' && $transactionCount > 1) {
             $used_point = $customer->total_point;
-
-            $customer->total_point = 0; 
-            $customer->save();
-
             $transaction->used_point = $used_point;
-
             $transaction->total_price -= $used_point;
             $transaction->total_return = $transaction->total_payment - $transaction->total_price;
 
+            $customer->total_point = 0;
         }
+
+        // ✅ Hitung total subtotal dari detail transaksi
+        $total_subtotal = $transaction->details->sum('sub_total');
+
+        // 💡 Hitung poin berdasarkan total subtotal
+        $transaction->point = round($total_subtotal / 100);
+
+        $customer->total_point += $transaction->point;
+
+        $customer->save();
 
         $transaction->customer_id = $customer->id;
         $transaction->save();
 
         return redirect()->route('pembelian.show', $transaction->id)->with('success', 'Transaksi berhasil disimpan.');
     }
+
+
 
     public function exportPdf($id)
     {
@@ -309,7 +296,7 @@ class PembelianController extends Controller
     $chartData = [];
     $todayMemberSalesCount = null;
     $todayNonMemberSalesCount = null;
-
+    
     if (Auth::user()->role == 'employe') {
         $todaySalesCount = Pembelian::whereDate('created_at', Carbon::today())->count();
 
@@ -345,7 +332,7 @@ class PembelianController extends Controller
             'count' => $transactions->has($date) ? $transactions[$date]->count : 0
         ];
     }
-    
+
     // Ambil data penjualan produk untuk pie chart
     $productSales = DB::table('transaction_details')
         ->join('produks', 'transaction_details.produk_id', '=', 'produks.id')
@@ -354,9 +341,13 @@ class PembelianController extends Controller
         ->orderByDesc('total_terjual')
         ->get();
 
-    // Siapkan data untuk chart
+    // Siapkan data untuk chart penjualan produk
     $productLabels = $productSales->pluck('nama_produk');
     $productData = $productSales->pluck('total_terjual');
+
+    // 🔥 Tambahan: Ambil data stok produk untuk chart stok
+    $stokLabels = DB::table('produks')->pluck('nama_produk');
+    $stokData = DB::table('produks')->pluck('stok');
 
     return view('home', compact(
         'todaySalesCount',
@@ -365,9 +356,12 @@ class PembelianController extends Controller
         'productLabels',
         'productData',
         'todayMemberSalesCount',
-        'todayNonMemberSalesCount'
+        'todayNonMemberSalesCount',
+        'stokLabels', // ditambahkan ke view
+        'stokData'    // ditambahkan ke view
     ));
 }
+
 
     
 }

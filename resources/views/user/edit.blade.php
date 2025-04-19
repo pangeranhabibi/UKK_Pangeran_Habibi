@@ -17,7 +17,7 @@
                       <li class="breadcrumb-item active" aria-current="page">Tambah User<li>
                     </ol>
                   </nav>
-                <h1 class="mb-0 fw-bold">Tambah User</h1> 
+                <h1 class="mb-0 fw-bold">Edit User</h1> 
             </div>
         </div>
     </div>
